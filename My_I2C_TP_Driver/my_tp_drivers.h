@@ -3,6 +3,8 @@
 #define LCM_X_RESOLUTION_MAX 1080
 #define LCM_Y_RESOLUTION_MAX 2160
 #define MYTP_FINGER_NUM_MAX 10
+#define FINGER_OSR 64
+#define ACTIVEPEN_OSR 260
 
 struct mytp_fwinfo_data{
 	u32 mytp_fw_ver;

@@ -46,17 +46,17 @@ static void mytp_hw_reset(struct mytp_platform_data *pdata)
 	gpio_set_value(pdata->reset_gpio,1);
 }
 
-static int mytp_i2c_send_data(struct i2c_client *client,uint8_t *buf,uint8_t len)
+static int mytp_i2c_send_data(struct mytp_platform_data * pdata,uint8_t *buf,uint8_t len)
 {
 	int rc=0;
-	rc=i2c_master_send(client,buf,len);
+	rc=i2c_master_send(pdata->client,buf,len);
 	return rc;
 }
 
-static int mytp_i2c_recv_data(struct i2c_client *client,uint8_t *buf,uint8_t len)
+static int mytp_i2c_recv_data(struct mytp_platform_data * pdata,uint8_t *buf,uint8_t len)
 {
 	int rc=0;
-	rc=i2c_master_recv(client,buf,len);
+	rc=i2c_master_recv(pdata->client,buf,len);
 	return rc;
 }
 
@@ -71,31 +71,109 @@ static int mytp_poll(struct mytp_platform_data *pdata)
 		retry--;
 	}while(status == 1 && retry > 0);
 	mytp_debug(DEBUG_INFO,"mytp_poll_interrupt_status = %d!\n",status);
+	return (status == 0 ? 0 : -ETIMEDOUT);
 }
 
-static int mytp_get_data(struct i2c_client *client,uint8_t *cmd,uint8_t *buf,size_t w_size,size_t r_size)
+static int mytp_get_data(struct mytp_platform_data * pdata,uint8_t *cmd,uint8_t *buf,size_t w_size,size_t r_size)
 {
 	int rc;
 	if(buf==NULL)
 		return -EINVAL;
-	if((i2c_master_send(client,cmd,w_size)) != w_size){
-		mytp_debug(DEBUG_ERROR,"%s: i2c_master_send failed!\n",__func__);
+	if((mytp_i2c_send_data(pdata,cmd,w_size)) != w_size){
+		mytp_debug(DEBUG_ERROR,"%s: mytp_i2c_send_data failed!\n",__func__);
 		return -EINVAL;
 	}
-	
+	rc=mytp_poll(pdata);
+	if(rc<0){
+		mytp_debug(DEBUG_ERROR,"%s: mytp_poll status high!\n",__func__);
+	}
+	if(r_size <= 0){
+		r_size = w_size;
+	}
+	if((mytp_i2c_recv_data(pdata,buf,r_size)) != r_size){
+		mytp_debug(DEBUG_ERROR,"%s: mytp_i2c_send_data failed!\n",__func__);
+		return -EINVAL;
+	}
+	return 0;		
 }
 
-static int mytp_check_fwmode(struct i2c_client *client,struct mytp_platform_data *pdata)
-{
-	int len=0;
-	int j;
-	uint8_t check_fwmode_cmd[37]={0x04,0x00,0x23,0x00,0x03,0x18};
-	uint8_t buff[67]={0};
-}
-
-static int mytp_read_fwinfo(struct i2c_client *client,struct mytp_platform_data *pdata)
+static int mytp_check_fwmode(struct mytp_platform_data *pdata)
 {
 	int ret=0;
+	uint8_t check_fwmode_cmd[37]={0x04,0x00,0x23,0x00,0x03,0x18};
+	uint8_t buff_recv[67]={0};
+	mytp_debug(DEBUG_INFO,"mytp_check_fwmode start!\n");
+	ret = mytp_get_data(pdata,check_fwmode_cmd,buff_recv,sizeof(check_fwmode_cmd),sizeof(buff_recv));
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"%s mytp_get_data faile!\n",__func__);
+		return -EINVAL;
+	}
+	for(i=0;i<67;i++){
+		mytp_debug(DEBUG_INFO,"%s mytp_get_data_buff:buff_recv[%d]=0x%x\n",__func__,i,buff_recv[i]);
+	}
+	return 0;
+}
+
+static int mytp_read_fwinfo(struct mytp_platform_data *pdata)
+{
+	int ret=0;
+	int major,minor;
+	/* Get FW_VER,FWID_VER,BCODE_VER CMD */
+	uint8_t cmd_fw_ver[37]={0x04,0x00,0x23,0x00,0x03,0x00,0x04,0x53,0x00,0x00,0x01};
+	uint8_t cmd_id_ver[37]={0x04,0x00,0x23,0x00,0x03,0x00,0x04,0x53,0xf0,0x00,0x01};
+	uint8_t cmd_bc_ver[37]={0x04,0x00,0x23,0x00,0x03,0x00,0x04,0x53,0x10,0x00,0x01};
+	/* Get FW TX and RX Number cmd */
+	uint8_t cmd_txrx_number[37]={0x04,0x00,0x23,0x00,0x03,0x00,0x06,0x5b,0x00,0x00,0x00};
+	uint8_t buff_recv[67]={0};
+	mytp_debug(DEBUG_INFO,"mytp_read_fwinfo start!\n");
+	ret = mytp_get_data(pdata,cmd_fw_ver,buff_recv,sizeof(cmd_fw_ver),sizeof(buff_recv));
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"mytp read fw ver failed!\n");
+	}else{
+		major=((buff_recv[5] & 0x0f) << 4)|((buff_recv[6] & 0xf0) >> 4);
+		minor=((buff_recv[6] & 0x0f) << 4)|((buff_recv[7] & 0xf0) >> 4);
+		pdata->fwinfo->mytp_fw_ver = major<<8 |minor;
+		mytp_debug(DEBUG_INFO,"%s :fw_ver= 0x%4.4x\n",__func__,pdata->fwinfo->mytp_fw_ver);
+	}
+
+	ret = mytp_get_data(pdata,cmd_id_ver,buff_recv,sizeof(cmd_id_ver),sizeof(buff_recv));
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"mytp read fw id ver failed!\n");
+	}else{
+		major=((buff_recv[5] & 0x0f) << 4)|((buff_recv[6] & 0xf0) >> 4);
+		minor=((buff_recv[6] & 0x0f) << 4)|((buff_recv[7] & 0xf0) >> 4);
+		pdata->fwinfo->mytp_fw_id= major<<8 |minor;
+		mytp_debug(DEBUG_INFO,"%s :fw_id= 0x%4.4x\n",__func__,pdata->fwinfo->mytp_fw_id);
+	}
+
+	ret = mytp_get_data(pdata,cmd_bc_ver,buff_recv,sizeof(cmd_bc_ver),sizeof(buff_recv));
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"mytp read fw Bcode ver failed!\n");
+	}else{
+		major=((buff_recv[5] & 0x0f) << 4)|((buff_recv[6] & 0xf0) >> 4);
+		minor=((buff_recv[6] & 0x0f) << 4)|((buff_recv[7] & 0xf0) >> 4);
+		pdata->fwinfo->mytp_bcode_ver= major<<8 |minor;
+		mytp_debug(DEBUG_INFO,"%s :fw_bcode= 0x%4.4x\n",__func__,pdata->fwinfo->mytp_bcode_ver);
+	}
+
+	ret = mytp_get_data(pdata,cmd_txrx_number,buff_recv,sizeof(cmd_txrx_number),sizeof(buff_recv));
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"mytp read fw tx and rx number failed!\n");
+	}else{
+		pdata->fwinfo->mytp_rx_num=buff_recv[6];
+		pdata->fwinfo->mytp_tx_num=buff_recv[7];
+		mytp_debug(DEBUG_INFO,"%s :fw_rx_number= %d ,fw_tx_number= %d\n",__func__,pdata->fwinfo->mytp_rx_num,pdata->fwinfo->mytp_tx_num);
+	}
+
+	pdata->fwinfo->finger_x_resolution_max = (pdata->fwinfo->mytp_tx_num-1)*FINGER_OSR;
+	pdata->fwinfo->finger_y_resolution_max = (pdata->fwinfo->mytp_rx_num-1)*FINGER_OSR;
+	pdata->fwinfo->activepen_x_resolution_max = (pdata->fwinfo->mytp_tx_num-1)*ACTIVEPEN_OSR;
+	pdata->fwinfo->activepen_y_resolution_max = (pdata->fwinfo->mytp_rx_num-1)*ACTIVEPEN_OSR;
+	
+	mytp_debug(DEBUG_INFO,"%s :finger_x_resolution_max= %d , finger_y_resolution_max= %d\n",__func__,pdata->fwinfo->finger_x_resolution_max,pdata->fwinfo->finger_y_resolution_max);
+	mytp_debug(DEBUG_INFO,"%s :activepen_x_resolution_max= %d , activepen_y_resolution_max= %d\n",__func__,pdata->fwinfo->activepen_x_resolution_max,pdata->fwinfo->activepen_y_resolution_max);
+	
+	return 0;	
 }
 
 static int mytp_probe(struct i2c_client *client,const struct i2c_device_id *id)
@@ -127,7 +205,10 @@ static int mytp_probe(struct i2c_client *client,const struct i2c_device_id *id)
 
 	mytp_hw_reset(pdata);
 	msleep(300);
-
+	ret = mytp_check_fwmode(pdata);
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"%s check fwmode faile!\n",__func__);
+	}
 	mytp_debug(DEBUG_INFO,"mytp probe end!\n");
 err_parse_dts_failed:
 err_check_function_failed:
