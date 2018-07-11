@@ -1,12 +1,21 @@
 #define MYTP_DRIVER_NAME "mytp_demo"
 
-#define LCM_X_RESOLUTION_MAX 1080
-#define LCM_Y_RESOLUTION_MAX 2160
+#define MYTP_PROTOCOL_A
+//#define MYTP_PROTOCOL_B
+
+#define LCM_X_RESOLUTION_MAX 1920
+#define LCM_Y_RESOLUTION_MAX 1080
 #define MYTP_FINGER_NUM_MAX 10
 #define FINGER_OSR 64
 #define ACTIVEPEN_OSR 260
+#define ACTIVEPEN_PRESSURE_MAX 4096
+
+#define PACKET_SIZE 67
+#define MYTP_FINGERS_PKT 0x3F
+#define MYTP_ACTIVEPEN_PKT 0x0D
 
 struct mytp_fwinfo_data{
+	u32 mytp_fw_mode;
 	u32 mytp_fw_ver;
 	u32 mytp_fw_id;
 	u32 mytp_bcode_ver;
@@ -27,7 +36,7 @@ struct mytp_platform_data{
 	struct i2c_client *client;
 	struct input_dev *finger_input_dev;
 	struct input_dev *activepen_input_dev;
-	struct mytp_fwinfo_data *fwinfo;
+	struct mytp_fwinfo_data fwinfo;
 };
 
 /* Debug levels */
@@ -40,6 +49,6 @@ static int debug = DEBUG_INFO;
 #define mytp_debug(level, ...) \
 	do { \
 		if (debug >= (level)) \
-			printk("[my_tp_drivers]:" __VA_ARGS__); \
+			printk("[mytp_drivers]:" __VA_ARGS__); \
 		} while(0)
 		
