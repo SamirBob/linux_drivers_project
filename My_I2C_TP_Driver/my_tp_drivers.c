@@ -8,6 +8,9 @@
 #include <linux/delay.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
+#include <linux/miscdevice.h>
+#include <linux/fs.h>
+#include <linux/init.h>
 
 #include "my_tp_drivers.h"
 
@@ -373,6 +376,83 @@ static int mytp_register_interrupt(struct mytp_platform_data *pdata)
 	return ret;
 }
 
+int mytp_iap_open(struct inode *inode,struct file *filp)
+{
+	mytp_debug(DEBUG_INFO,"mytp_iap_open start\n");
+	if(mytp_private_ts == NULL)
+		mytp_debug(DEBUG_ERROR,"mytp_private_ts is NULL\n");
+	return 0;
+}
+
+int mytp_iap_release(struct inode *inode,struct file *filp){
+	return 0;
+}
+
+static ssize_t mytp_iap_write(struct file *filp,const char *buff,size_t count,loff_t *offp)
+{
+	int ret;
+	char *tmp;
+	mytp_debug(DEBUG_INFO,"mytp_iap_write\n");
+	if(count > 8192)
+		count = 8192;
+	tmp = kmalloc(count,GFP_KERNEL);
+	if(tmp==NULL)
+		return -ENOMEM;
+	if(copy_from_user(tmp,buff,count)){
+		return -EFAULT;
+	}
+}
+
+static ssize_t mytp_iap_read(struct file *filp, char *buff, size_t count, loff_t *offp)	
+{
+	char *tmp;
+	int ret;
+	long rc;
+	mytp_debug(DEBUG_INFO,"mytp_iap_read\n");
+	if(count > 8192)
+		count = 8192;
+	tmp = kmalloc(count, GFP_KERNEL);
+	if(tmp == NULL)
+		return -ENOMEM;
+	ret = i2c_master_recv(mytp_private_ts->client, tmp, count);
+	if(ret >= 0)
+		rc = copy_to_user(buff, tmp, count);
+	kfree(tmp);
+	return (ret == 1) ? count : ret;
+}
+
+static long mytp_iap_ioctl(struct file *filp,unsigned int cmd,unsigned long arg)
+{
+	int __user *ip=(int __user *)arg;
+	mytp_debug(DEBUG_INFO,"mytp_iap_ioctl start,cmd value = %x!\n",cmd);
+	switch(cmd){
+		case IOCTL_I2C_SLAVE:
+			mytp_private_ts->client->addr=(int __user)arg;
+			break;
+		case IOCTL_READ_FWINFO:
+			mytp_read_fwinfo(mytp_private_ts);
+			break;
+		case IOCTL_HW_RESET:
+			mytp_hw_reset(mytp_private_ts);
+			break;			
+	}	
+}
+
+static int mytp_register_misc_dev(struct mytp_platform_data *pdata)
+{
+	pdata->firmware.minor = MISC_DYNAMIC_MINOR;
+	pdata->firmware.name = "mytp-iap";
+	pdata->firmware.fops = &mytp_touch_fops;
+	pdata->firmware.mode = S_IFREG | S_IRWXUGO;
+
+	if(misc_register(&pdata->firmware) < 0)
+		mytp_debug(DEBUG_ERROR, "misc register dev failed!\n");
+		return -ENOMEM;
+	else
+		mytp_debug(DEBUG_ERROR, "misc register dev finished!\n");
+	return 0;
+}
+
 static int mytp_probe(struct i2c_client *client,const struct i2c_device_id *id)
 {
 	int ret=0;
@@ -404,33 +484,62 @@ static int mytp_probe(struct i2c_client *client,const struct i2c_device_id *id)
 	msleep(300);
 	ret = mytp_check_fwmode(pdata);
 	if(ret<0){
-		mytp_debug(DEBUG_ERROR,"%s check fwmode faile!\n",__func__);
+		mytp_debug(DEBUG_ERROR,"%s check fwmode failed!\n",__func__);
+		ret = -EINVAL;
+		goto err_check_fwmode_failed;
 	}
 
 	ret = mytp_read_fwinfo(pdata);
 	if(ret<0){
-		mytp_debug(DEBUG_ERROR,"%s read fwinfo faile!\n",__func__);
+		mytp_debug(DEBUG_ERROR,"%s read fwinfo failed!\n",__func__);
+		ret = -EINVAL;
+		goto err_check_fwinfo_failed;
 	}
 
 	ret = mytp_register_finger_input(pdata);
 	if(ret<0){
-		mytp_debug(DEBUG_ERROR,"%s register finger input faile!\n",__func__);
+		mytp_debug(DEBUG_ERROR,"%s register finger input failed!\n",__func__);
+		ret = -EINVAL;
+		goto err_register_finger_input_failed;
 	}
 
 	ret = mytp_register_activepen_input(pdata);
 	if(ret<0){
-		mytp_debug(DEBUG_ERROR,"%s register activepen input faile!\n",__func__);
+		mytp_debug(DEBUG_ERROR,"%s register activepen input failed!\n",__func__);
+		ret = -EINVAL;
+		goto err_register_activepen_input_failed;
 	}
 
+	ret = mytp_register_misc_dev(pdata);
+	if(ret<0){
+		mytp_debug(DEBUG_ERROR,"%s register misc dev failed!\n",__func__);
+		ret = -EINVAL;
+		goto err_register_misc_dev_failed;		
+	}
+	
 	ret = mytp_register_interrupt(pdata);
 	if(ret<0){
-		mytp_debug(DEBUG_ERROR,"%s register interrupt faile!\n",__func__);
+		mytp_debug(DEBUG_ERROR,"%s register interrupt failed!\n",__func__);
+		ret = -EINVAL;
+		goto err_register_interrupt_failed;
 	}
 
 	mytp_debug(DEBUG_INFO,"mytp probe end!\n");
+	return 0;
+	mytp_debug(DEBUG_INFO,"mytp probe failed!\n");
+err_register_interrupt_failed:
+	misc_deregister(&pdata->firmware);
+err_register_misc_dev_failed:
+	input_unregister_device(pdata->activepen_input_dev);
+err_register_activepen_input_failed:
+	input_unregister_device(pdata->finger_input_dev);
+err_register_finger_input_failed:
+err_check_fwinfo_failed:
+err_check_fwmode_failed:
 err_parse_dts_failed:
-err_check_function_failed:
+	kfree(pdata);
 err_alloc_data_failed:
+err_check_function_failed:
 	return ret;
 }
 

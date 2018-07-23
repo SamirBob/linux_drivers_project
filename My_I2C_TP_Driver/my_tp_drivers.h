@@ -14,6 +14,30 @@
 #define MYTP_FINGERS_PKT 0x3F
 #define MYTP_ACTIVEPEN_PKT 0x0D
 
+/* Mytp cmd list */
+#define MYTP_CMD_IOCTLID 0XD0
+#define IOCTL_I2C_SLAVE  _IOW(MYTP_CMD_IOCTLID,1,int)
+#define IOCTL_READ_FWINFO _IOR(MYTP_CMD_IOCTLID,2,int)
+#define IOCTL_HW_RESET _IOR(MYTP_CMD_IOCTLID,4,int)
+
+struct file_operations mytp_touch_fops = {
+	.open = mytp_iap_open,
+	.write = mytp_iap_write,
+	.read = mytp_iap_read,
+	.release = mytp_iap_release,
+	.unlocked_ioctl = mytp_iap_ioctl,
+};
+
+static struct attribute *mytp_attributes[] = {
+	&dev_attr_reset.attr,
+	&dev_attr_fw_info.attr,
+};
+
+static struct attribute_group mytp_attribute_group = {
+	.name = MYTP_DRIVER_NAME,
+	.attrs = mytp_attributes, 
+};
+
 struct mytp_fwinfo_data{
 	u32 mytp_fw_mode;
 	u32 mytp_fw_ver;
@@ -36,8 +60,11 @@ struct mytp_platform_data{
 	struct i2c_client *client;
 	struct input_dev *finger_input_dev;
 	struct input_dev *activepen_input_dev;
+	struct miscdevice firmware;
 	struct mytp_fwinfo_data fwinfo;
 };
+
+static struct mytp_platform_data *mytp_private_ts;
 
 /* Debug levels */
 #define NO_DEBUG 0
